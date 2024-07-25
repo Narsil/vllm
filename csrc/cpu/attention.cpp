@@ -227,6 +227,7 @@ struct paged_attention_v1_impl {
                                              // head_size/x, block_size, x]
       const scalar_t* __restrict__ v_cache,  // [num_blocks, num_kv_heads,
                                              // head_size, block_size]
+      const int* __restrict__ head_mapping,
       const int num_kv_heads, const float scale,
       const int* __restrict__ block_tables,  // [num_seqs,
                                              // max_num_blocks_per_seq]
@@ -259,7 +260,7 @@ struct paged_attention_v1_impl {
         const int* seq_block_table =
             block_tables + max_num_blocks_per_seq * seq_idx;
         const int block_num = (seq_len + BLOCK_SIZE - 1) / BLOCK_SIZE;
-        const int64_t kv_head_idx = head_idx / num_queries_per_kv;
+        const int64_t kv_head_idx = head_mapping[head_idx];
         const scalar_t* __restrict__ q_vec_ptr =
             q + seq_idx * q_stride + head_idx * HEAD_SIZE;
         const int last_block_token_num = seq_len - (block_num - 1) * BLOCK_SIZE;
@@ -342,7 +343,7 @@ struct paged_attention_v1_impl {
 
 #define LAUNCH_V1_ATTENTION_KERNEL(T, HEAD_SIZE, BLOCK_SIZE)                   \
   paged_attention_v1_impl<T, HEAD_SIZE, BLOCK_SIZE>::call(                     \
-      out_ptr, query_ptr, key_cache_ptr, value_cache_ptr, num_kv_heads, scale, \
+      out_ptr, query_ptr, key_cache_ptr, value_cache_ptr, head_mapping_ptr, num_kv_heads, scale, \
       block_tables_ptr, seq_lens_ptr, max_num_blocks_per_seq,                  \
       alibi_slopes_ptr, q_stride, kv_block_stride, kv_head_stride, num_seqs,   \
       num_heads);
@@ -350,7 +351,7 @@ struct paged_attention_v1_impl {
 template <typename T, int BLOCK_SIZE>
 void paged_attention_v1_impl_launcher(
     torch::Tensor& out, torch::Tensor& query, torch::Tensor& key_cache,
-    torch::Tensor& value_cache, int num_kv_heads, float scale,
+    torch::Tensor& value_cache, torch::Tensor& head_mapping, float scale,
     torch::Tensor& block_tables, torch::Tensor& seq_lens, int max_seq_len,
     const c10::optional<torch::Tensor>& alibi_slopes) {
   int num_seqs = query.size(0);
@@ -371,6 +372,8 @@ void paged_attention_v1_impl_launcher(
   T* query_ptr = reinterpret_cast<T*>(query.data_ptr());
   T* key_cache_ptr = reinterpret_cast<T*>(key_cache.data_ptr());
   T* value_cache_ptr = reinterpret_cast<T*>(value_cache.data_ptr());
+  const int* head_mapping_ptr = reinterpret_cast<const int*>(head_mapping.data_ptr());
+  const int num_kv_heads = head_mapping.size(0);
   int* block_tables_ptr = block_tables.data_ptr<int>();
   int* seq_lens_ptr = seq_lens.data_ptr<int>();
 
@@ -404,7 +407,7 @@ void paged_attention_v1_impl_launcher(
 
 #define CALL_V1_KERNEL_LAUNCHER(T, BLOCK_SIZE)                               \
   paged_attention_v1_impl_launcher<T, BLOCK_SIZE>(                           \
-      out, query, key_cache, value_cache, num_kv_heads, scale, block_tables, \
+      out, query, key_cache, value_cache, head_mapping, scale, block_tables, \
       seq_lens, max_seq_len, alibi_slopes);
 
 #define CALL_V1_KERNEL_LAUNCHER_BLOCK_SIZE(T)                     \
@@ -420,7 +423,7 @@ void paged_attention_v1_impl_launcher(
 
 void paged_attention_v1(
     torch::Tensor& out, torch::Tensor& query, torch::Tensor& key_cache,
-    torch::Tensor& value_cache, int64_t num_kv_heads, double scale,
+    torch::Tensor& value_cache, torch::Tensor& head_mapping, double scale,
     torch::Tensor& block_tables, torch::Tensor& seq_lens, int64_t block_size,
     int64_t max_seq_len, const c10::optional<torch::Tensor>& alibi_slopes,
     const std::string& kv_cache_dtype, double k_scale, double v_scale,
@@ -455,6 +458,7 @@ struct paged_attention_v2_impl {
                                              // head_size/x, block_size, x]
       const scalar_t* __restrict__ v_cache,  // [num_blocks, num_kv_heads,
                                              // head_size, block_size]
+      const int* __restrict__ head_mapping,               // [num_heads]
       const int num_kv_heads, const float scale,
       const int* __restrict__ block_tables,  // [num_seqs,
                                              // max_num_blocks_per_seq]
@@ -492,7 +496,7 @@ struct paged_attention_v2_impl {
           const int* seq_block_table = block_tables +
                                        max_num_blocks_per_seq * seq_idx +
                                        start_token_idx / BLOCK_SIZE;
-          const int64_t kv_head_idx = head_idx / num_queries_per_kv;
+          const int64_t kv_head_idx = head_mapping[head_idx];
           const scalar_t* __restrict__ q_vec_ptr =
               q + seq_idx * q_stride + head_idx * HEAD_SIZE;
 
@@ -654,7 +658,7 @@ struct paged_attention_v2_impl {
 #define LAUNCH_V2_ATTENTION_KERNEL(T, HEAD_SIZE, BLOCK_SIZE)                 \
   paged_attention_v2_impl<T, HEAD_SIZE, BLOCK_SIZE, PARTITION_SIZE>::call(   \
       out_ptr, exp_sums_ptr, max_logits_ptr, tmp_out_ptr, query_ptr,         \
-      key_cache_ptr, value_cache_ptr, num_kv_heads, scale, block_tables_ptr, \
+      key_cache_ptr, value_cache_ptr, head_mapping_ptr, num_kv_heads, scale, block_tables_ptr, \
       seq_lens_ptr, max_num_blocks_per_seq, alibi_slopes_ptr, q_stride,      \
       kv_block_stride, kv_head_stride, num_seqs, num_heads,                  \
       max_num_partitions);
@@ -663,7 +667,7 @@ template <typename T, int BLOCK_SIZE, int PARTITION_SIZE = 512>
 void paged_attention_v2_impl_launcher(
     torch::Tensor& out, torch::Tensor& exp_sums, torch::Tensor& max_logits,
     torch::Tensor& tmp_out, torch::Tensor& query, torch::Tensor& key_cache,
-    torch::Tensor& value_cache, int num_kv_heads, float scale,
+    torch::Tensor& value_cache, torch::Tensor& head_mapping, float scale,
     torch::Tensor& block_tables, torch::Tensor& seq_lens, int block_size,
     int max_seq_len, const c10::optional<torch::Tensor>& alibi_slopes) {
   int num_seqs = query.size(0);
@@ -688,6 +692,8 @@ void paged_attention_v2_impl_launcher(
   T* query_ptr = reinterpret_cast<T*>(query.data_ptr());
   T* key_cache_ptr = reinterpret_cast<T*>(key_cache.data_ptr());
   T* value_cache_ptr = reinterpret_cast<T*>(value_cache.data_ptr());
+  const int* head_mapping_ptr = reinterpret_cast<const int*>(head_mapping.data_ptr());
+  const int num_kv_heads = head_mapping.size(0);
   int* block_tables_ptr = block_tables.data_ptr<int>();
   int* seq_lens_ptr = seq_lens.data_ptr<int>();
 
@@ -722,7 +728,7 @@ void paged_attention_v2_impl_launcher(
 #define CALL_V2_KERNEL_LAUNCHER(T, BLOCK_SIZE)                              \
   paged_attention_v2_impl_launcher<T, BLOCK_SIZE>(                          \
       out, exp_sums, max_logits, tmp_out, query, key_cache, value_cache,    \
-      num_kv_heads, scale, block_tables, seq_lens, block_size, max_seq_len, \
+      head_mapping, scale, block_tables, seq_lens, block_size, max_seq_len, \
       alibi_slopes);
 
 #define CALL_V2_KERNEL_LAUNCHER_BLOCK_SIZE(T)                     \
@@ -739,7 +745,7 @@ void paged_attention_v2_impl_launcher(
 void paged_attention_v2(
     torch::Tensor& out, torch::Tensor& exp_sums, torch::Tensor& max_logits,
     torch::Tensor& tmp_out, torch::Tensor& query, torch::Tensor& key_cache,
-    torch::Tensor& value_cache, int64_t num_kv_heads, double scale,
+    torch::Tensor& value_cache, torch::Tensor& head_mapping, double scale,
     torch::Tensor& block_tables, torch::Tensor& seq_lens, int64_t block_size,
     int64_t max_seq_len, const c10::optional<torch::Tensor>& alibi_slopes,
     const std::string& kv_cache_dtype, double k_scale, double v_scale,

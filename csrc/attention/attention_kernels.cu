@@ -99,6 +99,7 @@ __device__ void paged_attention_kernel(
     const cache_t* __restrict__ v_cache,  // [num_blocks, num_kv_heads,
                                           // head_size, block_size]
     const int* __restrict__ head_mapping,   // [num_heads]
+    const int num_kv_heads,
     const float scale,
     const int* __restrict__ block_tables,  // [num_seqs, max_num_blocks_per_seq]
     const int* __restrict__ seq_lens,      // [num_seqs]
@@ -506,6 +507,7 @@ __global__ void paged_attention_v1_kernel(
     const cache_t* __restrict__ v_cache,  // [num_blocks, num_kv_heads,
                                           // head_size, block_size]
     const int* __restrict__ head_mapping,               // [num_heads]
+    const int num_kv_heads,
     const float scale,
     const int* __restrict__ block_tables,  // [num_seqs, max_num_blocks_per_seq]
     const int* __restrict__ seq_lens,      // [num_seqs]
@@ -518,7 +520,7 @@ __global__ void paged_attention_v1_kernel(
   paged_attention_kernel<scalar_t, cache_t, HEAD_SIZE, BLOCK_SIZE, NUM_THREADS,
                          KV_DTYPE, IS_BLOCK_SPARSE>(
       /* exp_sums */ nullptr, /* max_logits */ nullptr, out, q, k_cache,
-      v_cache, head_mapping, scale, block_tables, seq_lens,
+      v_cache, head_mapping, num_kv_heads, scale, block_tables, seq_lens,
       max_num_blocks_per_seq, alibi_slopes, q_stride, kv_block_stride,
       kv_head_stride, k_scale, v_scale, tp_rank, blocksparse_local_blocks,
       blocksparse_vert_stride, blocksparse_block_size,
@@ -542,6 +544,7 @@ __global__ void paged_attention_v2_kernel(
     const cache_t* __restrict__ v_cache,  // [num_blocks, num_kv_heads,
                                           // head_size, block_size]
     const int* __restrict__ head_mapping,               // [num_heads]
+    const int num_kv_heads,
     const float scale,
     const int* __restrict__ block_tables,  // [num_seqs, max_num_blocks_per_seq]
     const int* __restrict__ seq_lens,      // [num_seqs]
@@ -553,7 +556,7 @@ __global__ void paged_attention_v2_kernel(
     const int blocksparse_block_size, const int blocksparse_head_sliding_step) {
   paged_attention_kernel<scalar_t, cache_t, HEAD_SIZE, BLOCK_SIZE, NUM_THREADS,
                          KV_DTYPE, IS_BLOCK_SPARSE, PARTITION_SIZE>(
-      exp_sums, max_logits, tmp_out, q, k_cache, v_cache, head_mapping, scale,
+      exp_sums, max_logits, tmp_out, q, k_cache, v_cache, head_mapping, num_kv_heads, scale,
       block_tables, seq_lens, max_num_blocks_per_seq, alibi_slopes, q_stride,
       kv_block_stride, kv_head_stride, k_scale, v_scale, tp_rank,
       blocksparse_local_blocks, blocksparse_vert_stride, blocksparse_block_size,
@@ -678,7 +681,7 @@ __global__ void paged_attention_v2_reduce_kernel(
   vllm::paged_attention_v1_kernel<T, CACHE_T, HEAD_SIZE, BLOCK_SIZE,        \
                                   NUM_THREADS, KV_DTYPE, IS_BLOCK_SPARSE>   \
       <<<grid, block, shared_mem_size, stream>>>(                           \
-          out_ptr, query_ptr, key_cache_ptr, value_cache_ptr, head_mapping_ptr, \
+          out_ptr, query_ptr, key_cache_ptr, value_cache_ptr, head_mapping_ptr, num_kv_heads, \
           scale, block_tables_ptr, seq_lens_ptr, max_num_blocks_per_seq,    \
           alibi_slopes_ptr, q_stride, kv_block_stride, kv_head_stride,      \
           k_scale, v_scale, tp_rank, blocksparse_local_blocks,              \
@@ -719,6 +722,7 @@ void paged_attention_v1_launcher(
   CACHE_T* key_cache_ptr = reinterpret_cast<CACHE_T*>(key_cache.data_ptr());
   CACHE_T* value_cache_ptr = reinterpret_cast<CACHE_T*>(value_cache.data_ptr());
   const int* head_mapping_ptr = reinterpret_cast<const int*>(head_mapping.data_ptr());
+  const int num_kv_heads = head_mapping.size(0);
   int* block_tables_ptr = block_tables.data_ptr<int>();
   int* seq_lens_ptr = seq_lens.data_ptr<int>();
 
@@ -831,7 +835,7 @@ void paged_attention_v1(
                                   PARTITION_SIZE>                              \
       <<<grid, block, shared_mem_size, stream>>>(                              \
           exp_sums_ptr, max_logits_ptr, tmp_out_ptr, query_ptr, key_cache_ptr, \
-          value_cache_ptr, head_mapping_ptr, scale, block_tables_ptr,              \
+          value_cache_ptr, head_mapping_ptr, num_kv_heads, scale, block_tables_ptr,              \
           seq_lens_ptr, max_num_blocks_per_seq, alibi_slopes_ptr, q_stride,    \
           kv_block_stride, kv_head_stride, k_scale, v_scale, tp_rank,          \
           blocksparse_local_blocks, blocksparse_vert_stride,                   \
@@ -879,6 +883,7 @@ void paged_attention_v2_launcher(
   CACHE_T* key_cache_ptr = reinterpret_cast<CACHE_T*>(key_cache.data_ptr());
   CACHE_T* value_cache_ptr = reinterpret_cast<CACHE_T*>(value_cache.data_ptr());
   const int* head_mapping_ptr = reinterpret_cast<const int*>(head_mapping.data_ptr());
+  const int num_kv_heads = head_mapping.size(0);
   int* block_tables_ptr = block_tables.data_ptr<int>();
   int* seq_lens_ptr = seq_lens.data_ptr<int>();
 
