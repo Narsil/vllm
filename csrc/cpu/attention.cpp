@@ -393,6 +393,9 @@ void paged_attention_v1_impl_launcher(
     case 128:
       LAUNCH_V1_ATTENTION_KERNEL(T, 128, BLOCK_SIZE);
       break;
+    case 160:
+      LAUNCH_V1_ATTENTION_KERNEL(T, 160, BLOCK_SIZE);
+      break;
     case 192:
       LAUNCH_V1_ATTENTION_KERNEL(T, 192, BLOCK_SIZE);
       break;
@@ -712,6 +715,9 @@ void paged_attention_v2_impl_launcher(
       break;
     case 128:
       LAUNCH_V2_ATTENTION_KERNEL(T, 128, BLOCK_SIZE);
+      break;
+    case 160:
+      LAUNCH_V2_ATTENTION_KERNEL(T, 160, BLOCK_SIZE);
       break;
     case 192:
       LAUNCH_V2_ATTENTION_KERNEL(T, 192, BLOCK_SIZE);
